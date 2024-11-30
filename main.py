@@ -400,204 +400,6 @@ class TaskRow(RecycleDataViewBehavior, BoxLayout):
         return False
 
 
-class TaskListRecycleView(RecycleView):
-    """Список задач."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.data = []
-
-    def get_selected_task(self):
-        """Возвращает имя выделенной задачи."""
-        for item in self.data:
-            if item.get("selected", False):
-                return item["task_name"]
-        return None
-
-
-class TaskManagerLayout(BoxLayout):
-    """Основной интерфейс приложения."""
-
-    def __init__(self, screen_manager, **kwargs):
-        super().__init__(**kwargs)
-        self.screen_manager = screen_manager
-        self.orientation = "vertical"
-
-        self.students_spinner = Spinner(
-            text='Выберите студента',
-            values=[student[1] for student in load_students()],
-            size_hint=(None, None),
-            size=(200, 44)
-        )
-        self.add_widget(self.students_spinner)
-        # Поля ввода
-        self.task_name_input = TextInput(hint_text="Название задачи", multiline=False, size_hint_y=None, height=40)
-        self.deadline_input = TextInput(hint_text="Дедлайн (ГГГГ-ММ-ДД ЧЧ:ММ:СС)", multiline=False, size_hint_y=None,
-                                        height=40)
-
-        # Кнопки
-        self.add_task_btn = Button(text="Добавить задачу", size_hint_y=None, height=50)
-        self.remove_task_btn = Button(text="Удалить задачу", size_hint_y=None, height=50)
-        self.show_all_tasks_btn = Button(text="Показать все задачи", size_hint_y=None, height=50)
-        self.view_deadline_btn = Button(text="Посмотреть дедлайн", size_hint_y=None, height=50)
-        self.exit_btn = Button(text="Выйти", size_hint_y=None, height=50)
-        self.task_list_widget = TaskListRecycleView(size_hint_y=2)
-
-
-        self.add_task_btn.bind(on_press=self.add_task)
-        self.show_all_tasks_btn.bind(on_press=self.show_all_tasks)
-        self.view_deadline_btn.bind(on_press=self.view_deadline)
-        self.remove_task_btn.bind(on_press=self.remove_task)
-        self.exit_btn.bind(on_press=self.exit_to_login)
-
-        # Добавление виджетов в основной layout
-        self.add_widget(Label(text="Название задачи:"))
-        self.add_widget(self.task_name_input)
-        self.add_widget(Label(text="Дедлайн:"))
-        self.add_widget(self.deadline_input)
-        self.add_widget(self.add_task_btn)
-        self.add_widget(self.remove_task_btn)
-        self.add_widget(self.show_all_tasks_btn)
-        self.add_widget(self.view_deadline_btn)
-        self.add_widget(self.task_list_widget)
-        self.add_widget(self.exit_btn)
-
-    def add_task(self, instance):
-        task_name = self.task_name_input.text.strip()
-        deadline_str = self.deadline_input.text.strip()
-
-        if task_name and deadline_str:
-            try:
-                # Преобразование строки дедлайна в datetime
-                deadline_obj = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M:%S")
-                remaining_time = deadline_obj - datetime.now()
-
-                if remaining_time.total_seconds() > 0:
-                    # Добавляем задачу в таблицу tasks
-                    conn = sqlite3.connect('deadlibe.db')
-                    cursor = conn.cursor()
-
-                    cursor.execute('''
-                    INSERT INTO tasks (task_name, deadline)
-                    VALUES (?, ?)
-                    ''', (task_name, deadline_str))
-                    conn.commit()
-                    task_id = cursor.lastrowid  # Получаем ID только что добавленной задачи
-                    conn.close()
-
-                    # Назначаем задачу студенту
-                    selected_student_name = self.students_spinner.text.strip()
-
-                    # Загружаем список студентов
-                    students = load_students()
-                    print("Список студентов:", students)  # Для отладки
-                    print("Выбранный студент:", selected_student_name)  # Для отладки
-
-                    try:
-                        selected_student_id = next(
-                            student[0] for student in students if student[1] == selected_student_name
-                        )
-                    except StopIteration:
-                        self.show_popup("Ошибка", "Выбранный студент не найден.")
-                        return
-
-                    # Присваиваем задачу студенту
-                    assign_task_to_student(task_id, selected_student_id)
-
-                    self.show_popup("Успех", f"Задача '{task_name}' назначена студенту {selected_student_name}.")
-                else:
-                    self.show_popup("Ошибка", "Дедлайн не может быть задним числом.")
-            except ValueError:
-                self.show_popup("Ошибка", "Введите корректный формат даты и времени.")
-        else:
-            self.show_popup("Ошибка", "Введите название задачи и дедлайн.")
-
-    def save_task_to_db(self, task_name, deadline_str):
-        """Сохранение задачи в базу данных."""
-        conn = sqlite3.connect('deadlibe.db')
-        cursor = conn.cursor()
-
-        cursor.execute('''INSERT INTO tasks (task_name, deadline)
-                          VALUES (?, ?)''', (task_name, deadline_str))  # Пока описание задачи пустое
-
-        conn.commit()
-        conn.close()
-
-    def load_tasks(self):
-        """Загрузка всех задач из базы данных в список."""
-        conn = sqlite3.connect('deadlibe.db')
-        cursor = conn.cursor()
-
-        cursor.execute('SELECT task_name FROM tasks')  # Загружаем только названия задач
-        tasks = cursor.fetchall()
-
-        # Обновляем данные в RecycleView
-        self.task_list_widget.data = [{"task_name": task[0], "selected": False} for task in tasks]
-
-        conn.close()
-
-    def show_all_tasks(self, instance):
-
-        self.load_tasks()
-
-    def view_deadline(self, instance):
-        selected_task = self.task_list_widget.get_selected_task()
-        if selected_task:
-            conn = sqlite3.connect('deadlibe.db')
-            cursor = conn.cursor()
-
-            cursor.execute('''SELECT deadline FROM tasks WHERE task_name = ?''', (selected_task,))
-            task = cursor.fetchone()
-            if task:
-                self.show_popup("Дедлайн", f"Дедлайн для задачи '{selected_task}': {task[0]}")
-            conn.close()
-        else:
-            self.show_popup("Ошибка", "Выберите задачу для просмотра дедлайна.")
-
-    def remove_task(self, instance):
-        selected_task = self.task_list_widget.get_selected_task()
-        if selected_task:
-            conn = sqlite3.connect('deadlibe.db')
-            cursor = conn.cursor()
-
-            cursor.execute('''DELETE FROM tasks WHERE task_name = ?''', (selected_task,))
-            conn.commit()
-            conn.close()
-
-            self.show_popup("Успех", f"Задача '{selected_task}' удалена успешно.")
-            self.load_tasks()
-        else:
-            self.show_popup("Ошибка", "Выберите задачу для удаления.")
-
-    def exit_to_login(self, instance):
-        """Переход к экрану авторизации."""
-        self.manager.current = 'login'
-
-    def show_popup(self, title, message):
-        popup = Popup(title=title, content=Label(text=message), size_hint=(0.8, 0.4))
-        popup.open()
-
-def load_students():
-    conn = sqlite3.connect('deadlibe.db')
-    cursor = conn.cursor()
-    cursor.execute('''SELECT id, name FROM students''')
-    students = cursor.fetchall()
-    conn.close()
-    return students
-
-# Функция для назначения задачи студенту
-def assign_task_to_student(task_id, student_id):
-    conn = sqlite3.connect('deadlibe.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-    INSERT INTO user_to_task (id_user, is_task)
-    VALUES (?, ?)
-    ''', (student_id, task_id))
-    conn.commit()
-    conn.close()
-    print(f"Задача {task_id} назначена студенту {student_id}.")
-
-
 
 class TaskRow(RecycleDataViewBehavior, BoxLayout):
     """Одна строка задачи в списке."""
@@ -634,13 +436,14 @@ class TaskListRecycleView(RecycleView):
 
 
 class TaskManagerLayout(BoxLayout):
-    """Основной интерфейс приложения."""
+    """Основной интерфейс для учителя."""
 
     def __init__(self, screen_manager, **kwargs):
         super().__init__(**kwargs)
         self.screen_manager = screen_manager  # Сохраняем ссылку на ScreenManager
         self.orientation = "vertical"
 
+        # Спиннер для выбора студента
         self.students_spinner = Spinner(
             text='Выберите студента',
             values=[student[1] for student in load_students()],
@@ -648,40 +451,52 @@ class TaskManagerLayout(BoxLayout):
             size=(200, 44)
         )
         self.add_widget(self.students_spinner)
-        # Поля ввода
-        self.task_name_input = TextInput(hint_text="Название задачи", multiline=False, size_hint_y=None, height=40)
-        self.deadline_input = TextInput(hint_text="Дедлайн (ГГГГ-ММ-ДД ЧЧ:ММ:СС)", multiline=False, size_hint_y=None,
-                                        height=40)
+
+        # Метка и поле ввода для Названия задачи
+        self.add_widget(Label(text="Название задачи:"))
+        self.task_name_input = TextInput(hint_text="Введите название задачи", multiline=False, size_hint_y=None, height=40)
+        self.add_widget(self.task_name_input)
+
+        # Метка и поле ввода для Дедлайна
+        self.add_widget(Label(text="Дедлайн (ГГГГ-ММ-ДД ЧЧ:ММ:СС):"))
+        self.deadline_input = TextInput(hint_text="Введите дедлайн", multiline=False, size_hint_y=None, height=40)
+        self.add_widget(self.deadline_input)
+
+        # Спиннер для выбора задачи
+        self.tasks_spinner = Spinner(
+            text='Выберите задачу',
+            values=[],  # Список задач будет заполняться динамически
+            size_hint=(None, None),
+            size=(200, 44)
+        )
+        self.add_widget(self.tasks_spinner)
 
         # Кнопки
         self.add_task_btn = Button(text="Добавить задачу", size_hint_y=None, height=50)
         self.remove_task_btn = Button(text="Удалить задачу", size_hint_y=None, height=50)
-        self.show_all_tasks_btn = Button(text="Показать все задачи", size_hint_y=None, height=50)
         self.view_deadline_btn = Button(text="Посмотреть дедлайн", size_hint_y=None, height=50)
+        self.view_status_btn = Button(text="Посмотреть статус", size_hint_y=None, height=50)
         self.exit_btn = Button(text="Выйти", size_hint_y=None, height=50)
-        # Список задач
-        self.task_list_widget = TaskListRecycleView(size_hint_y=2)
 
-        # Подключение обработчиков событий
+        # Привязываем обработчики событий
         self.add_task_btn.bind(on_press=self.add_task)
-        self.show_all_tasks_btn.bind(on_press=self.show_tasks)
-        self.view_deadline_btn.bind(on_press=self.view_deadline)
         self.remove_task_btn.bind(on_press=self.remove_task)
+        self.view_deadline_btn.bind(on_press=self.view_deadline)
+        self.view_status_btn.bind(on_press=self.view_status)
         self.exit_btn.bind(on_press=self.exit_to_login)
 
-        # Добавление виджетов в основной layout
-        self.add_widget(Label(text="Название задачи:"))
-        self.add_widget(self.task_name_input)
-        self.add_widget(Label(text="Дедлайн:"))
-        self.add_widget(self.deadline_input)
+        # Добавляем виджеты в layout
         self.add_widget(self.add_task_btn)
         self.add_widget(self.remove_task_btn)
-        self.add_widget(self.show_all_tasks_btn)
         self.add_widget(self.view_deadline_btn)
-        self.add_widget(self.task_list_widget)
+        self.add_widget(self.view_status_btn)
         self.add_widget(self.exit_btn)
 
+        # Обновление задач в спинере
+        self.update_tasks_spinner()
+
     def add_task(self, instance):
+        """Добавляет задачу и назначает ее студенту."""
         task_name = self.task_name_input.text.strip()
         deadline_str = self.deadline_input.text.strip()
 
@@ -696,20 +511,26 @@ class TaskManagerLayout(BoxLayout):
                     cursor = conn.cursor()
 
                     cursor.execute('''
-                    INSERT INTO tasks (task_name, deadline)
-                    VALUES (?, ?)
+                        INSERT INTO tasks (task_name, deadline)
+                        VALUES (?, ?)
                     ''', (task_name, deadline_str))
                     conn.commit()
                     task_id = cursor.lastrowid  # Получаем ID только что добавленной задачи
-                    conn.close()
 
-                    # Назначаем задачу студенту
+                    # Связываем задачу с выбранным студентом
                     selected_student_name = self.students_spinner.text
                     students = load_students()
-                    selected_student_id = next(student[0] for student in students if student[1] == selected_student_name)
+                    selected_student_id = next(
+                        student[0] for student in students if student[1] == selected_student_name)
 
-                    # Присваиваем задачу студенту
-                    assign_task_to_student(task_id, selected_student_id)
+                    # Добавляем запись в таблицу user_to_task
+                    cursor.execute('''
+                        INSERT INTO user_to_task (id_user, is_task)
+                        VALUES (?, ?)
+                    ''', (selected_student_id, task_id))
+                    conn.commit()
+
+                    conn.close()
 
                     self.show_popup("Успех", f"Задача '{task_name}' назначена студенту {selected_student_name}.")
                 else:
@@ -719,40 +540,33 @@ class TaskManagerLayout(BoxLayout):
         else:
             self.show_popup("Ошибка", "Введите название задачи и дедлайн.")
 
-    def save_task_to_db(self, task_name, deadline_str):
-        """Сохранение задачи в базу данных."""
-        conn = sqlite3.connect('deadlibe.db')
-        cursor = conn.cursor()
-
-        cursor.execute('''INSERT INTO tasks (task_name, deadline)
-                          VALUES (?, ?)''', (task_name, deadline_str))  # Пока описание задачи пустое
-
-        conn.commit()
-        conn.close()
-
-    def load_tasks(self):
-        """Загрузка всех задач из базы данных в список."""
-        conn = sqlite3.connect('deadlibe.db')
-        cursor = conn.cursor()
-
-        cursor.execute('SELECT task_name FROM tasks')  # Загружаем только названия задач
-        tasks = cursor.fetchall()
-
-        # Обновляем данные в RecycleView
-        self.task_list_widget.data = [{"task_name": task[0], "selected": False} for task in tasks]
-
-        conn.close()
-
-    def show_tasks(self, instance):
-        self.manager.current = 'task_list'
-
-    def view_deadline(self, instance):
-        selected_task = self.task_list_widget.get_selected_task()
-        if selected_task:
+    def remove_task(self, instance):
+        """Удаляет задачу, выбранную в спинере задач."""
+        selected_task = self.tasks_spinner.text
+        if selected_task != 'Выберите задачу':
             conn = sqlite3.connect('deadlibe.db')
             cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM tasks WHERE task_name = ?
+            ''', (selected_task,))
+            conn.commit()
 
-            cursor.execute('''SELECT deadline FROM tasks WHERE task_name = ?''', (selected_task,))
+            # Обновляем список задач в спинере
+            self.update_tasks_spinner()
+            conn.close()
+            self.show_popup("Успех", f"Задача '{selected_task}' удалена успешно.")
+        else:
+            self.show_popup("Ошибка", "Выберите задачу для удаления.")
+
+    def view_deadline(self, instance):
+        """Показывает дедлайн для выбранной задачи."""
+        selected_task = self.tasks_spinner.text
+        if selected_task != 'Выберите задачу':
+            conn = sqlite3.connect('deadlibe.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT deadline FROM tasks WHERE task_name = ?
+            ''', (selected_task,))
             task = cursor.fetchone()
             if task:
                 self.show_popup("Дедлайн", f"Дедлайн для задачи '{selected_task}': {task[0]}")
@@ -760,29 +574,47 @@ class TaskManagerLayout(BoxLayout):
         else:
             self.show_popup("Ошибка", "Выберите задачу для просмотра дедлайна.")
 
-    def remove_task(self, instance):
-        selected_task = self.task_list_widget.get_selected_task()
-        if selected_task:
+    def view_status(self, instance):
+        """Показывает статус для выбранной задачи."""
+        selected_task = self.tasks_spinner.text
+        if selected_task != 'Выберите задачу':
             conn = sqlite3.connect('deadlibe.db')
             cursor = conn.cursor()
-
-            cursor.execute('''DELETE FROM tasks WHERE task_name = ?''', (selected_task,))
-            conn.commit()
+            cursor.execute('''
+                SELECT status FROM tasks WHERE task_name = ?
+            ''', (selected_task,))
+            task = cursor.fetchone()
+            if task:
+                self.show_popup("Статус", f"Статус задачи '{selected_task}': {task[0]}")
             conn.close()
-
-            self.show_popup("Успех", f"Задача '{selected_task}' удалена успешно.")
-            self.load_tasks()
         else:
-            self.show_popup("Ошибка", "Выберите задачу для удаления.")
+            self.show_popup("Ошибка", "Выберите задачу для просмотра статуса.")
 
     def exit_to_login(self, instance):
         """Переход к экрану авторизации."""
         self.screen_manager.current = 'login'
 
-    def show_popup(self, title, message):
-        popup = Popup(title=title, content=Label(text=message), size_hint=(0.8, 0.4))
-        popup.open()
+    def update_tasks_spinner(self):
+        """Обновляет список задач в спинере задач."""
+        conn = sqlite3.connect('deadlibe.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT task_name FROM tasks')
+        tasks = cursor.fetchall()
 
+        task_names = [task[0] for task in tasks]
+        task_names.insert(0, 'Выберите задачу')  # Добавляем placeholder для выбора
+
+        self.tasks_spinner.values = task_names
+        conn.close()
+
+    def show_popup(self, title, message):
+        """Показывает попап с сообщением."""
+        popup = Popup(
+            title=title,
+            content=Label(text=message),
+            size_hint=(0.8, 0.4),
+        )
+        popup.open()
 
 class TaskListScreen(Screen):
     def __init__(self, **kwargs):
